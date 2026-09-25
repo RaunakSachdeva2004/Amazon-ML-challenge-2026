@@ -1,0 +1,23 @@
+# Python & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+*.crdownload
+
+# Data & Outputs
+dataset/
+output/
+*.tsv
+*.csv
+*.zip
+*.tar.gz
+*.pkl
+*.bin
+
+# Temp & Artifacts
+problem_statement.txt
+.DS_Store
+Thumbs.db
