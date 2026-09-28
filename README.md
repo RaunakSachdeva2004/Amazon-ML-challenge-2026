@@ -48,60 +48,10 @@ $$F_{0.5} = \frac{(1 + 0.5^2) \times \text{Precision} \times \text{Recall}}{0.5^
 
 ## System Architecture
 
-```
-                      +---------------------------------------+
-                      |   Source 1 (Reference Entity Set)     |
-                      |   Source 2 & Source 3 (Noisy Sources) |
-                      +-------------------+-------------------+
-                                          |
-                                          v
-                      +---------------------------------------+
-                      |      Multi-Strategy Normalization     |
-                      |  - Unicode NFKC & Whitespace Collapse |
-                      |  - 20+ Legal Suffixes & Abbreviations |
-                      |  - Regex PIN/ZIP & Street Number Extr.|
-                      +-------------------+-------------------+
-                                          |
-                                          v
-                      +---------------------------------------+
-                      |        Multi-Strategy Blocking        |
-                      |  1. Token Inverted Index              |
-                      |  2. Char TF-IDF KNN (Business Names)  |
-                      |  3. Token TF-IDF KNN (Addresses)      |
-                      |  4. Double Metaphone Phonetic Keying  |
-                      |  5. Sorted Neighborhood (Name Prefix) |
-                      +-------------------+-------------------+
-                                          | (Top 60 Candidates / S1)
-                                          v
-                      +---------------------------------------+
-                      |      25-Feature Engineering Engine    |
-                      |  - String Distances (Lev, Jaro, Dice) |
-                      |  - Token Overlap (Sort & Set Ratio)   |
-                      |  - Address (PIN/ZIP, Street Numbers)  |
-                      |  - Exact & Suffix-Stripped Matches    |
-                      +-------------------+-------------------+
-                                          |
-                                          v
-                      +---------------------------------------+
-                      |       LightGBM Classifier Model       |
-                      |  - Binary Objective (500 est, 31 leaf)|
-                      |  - Strict <= 8B Parameter Constraint  |
-                      +-------------------+-------------------+
-                                          |
-                                          v
-                      +---------------------------------------+
-                      |      Precision-Weighted Decoding      |
-                      |  - Threshold Optimization (0.05-0.95) |
-                      |  - Direct Macro F_0.5 Tuning          |
-                      +-------------------+-------------------+
-                                          |
-                                          v
-                      +---------------------------------------+
-                      |         Final Deliverables (PASS)     |
-                      |  - output/matching_results.tsv        |
-                      |  - output/candidate_pairs.tsv         |
-                      +-------------------+-------------------+
-```
+<p align="center">
+  <img src="docs/System%20Architecture.png" alt="Amazon ML Challenge 2026 System Architecture" width="720"/>
+</p>
+
 
 ---
 
@@ -181,7 +131,8 @@ Amazon-ML-challenge-2026/
 ├── docs/                                      # Project Specifications & Notes
 │   ├── facts.txt                              # Key impact points and resume highlights
 │   ├── execution_prompt_specification.docx    # Autonomous execution specification
-│   └── execution_prompt_specification.txt     # Plain-text execution specification
+│   ├── execution_prompt_specification.txt     # Plain-text execution specification
+│   └── System Architecture.png                # Pipeline architecture diagram
 │
 ├── scripts/                                   # Standalone Scripts & Utilities
 │   ├── check_download.py                      # Dataset verification utility
