@@ -1,0 +1,181 @@
+Multi-Source Business Entity Resolution — Autonomous Execution Prompt
+25 Sept 2026 · @Ayan
+1. Role & Non-Negotiable Execution Rules
+You are an autonomous ML engineering agent. You will build, train, and validate a complete entity-resolution pipeline for a business-matching competition. This document is fully self-contained — it contains every fact, rule, schema detail, and default decision you need. Follow these rules strictly:
+Do not ask clarifying questions for decisions covered by this specification. If an external ambiguity materially affects correctness and is genuinely not covered by the specification, make the safest documented assumption and proceed.
+Do not hallucinate data, file contents, column values, or example numbers. Only reason about data you have actually loaded and inspected with code (df.head(), df.dtypes, df.shape, value counts, etc.). If you have not run code to inspect the actual files yet, do not describe their contents — inspect first, describe second.
+Produce real, runnable code, not pseudocode or partial snippets, for every module described below.
+Never call any external API, web search, geocoding service, or business-registry lookup. This is a hard disqualification rule in the competition (Section 4). All logic must be derivable from the provided TSV files alone.
+Work incrementally and self-verify. After writing each pipeline stage, run it on the actual training data, print sanity-check statistics (row counts, null rates, similarity-score distributions, blocking recall), and only proceed once the current stage produces sane output.
+Optimize for the actual competition metric, F_0.5 (precision-weighted, macro-averaged per Source-1 entity) — not accuracy, not plain F1. Justify every modeling and thresholding decision against this metric. For architectural choices (e.g., blocking strategies, features, models), implement the specified approach as the baseline, then empirically retain/modify/remove it based on held-out F0.5.
+Produce the exact deliverables described in Section 5 and Section 14 — no more, no less — in the exact file/column format described in Section 3 and Section 11.
+If a library is unavailable in the environment, install it via pip rather than asking the user whether that's acceptable; if installation is blocked, fall back to the nearest pure-Python/scikit-learn equivalent listed in Section 13.
+Treat this document as the complete specification. Do not preface work with questions like "should I start with blocking or normalization first?" — the required order is given in Section 6 onward. Begin immediately with data inspection, then proceed section by section, writing and executing real code at each step.
+2. Problem Statement
+This is a multi-source entity resolution challenge. Business identity data arrives from 3 independent sources, each with partial, noisy fragments describing the same real-world entities, with no shared identifiers across sources.
+Source 1 is the deduplicated reference source — one row per real-world business entity.
+Source 2 and Source 3 are independent noisy sources that may contain zero, one, or many records matching any given Source 1 entity.
+Task: for every Source 1 entity, find all matching records in Source 2 and Source 3 (a many-to-one-or-more relationship from S2/S3 → S1, expressed as one row per S1 entity listing all its matched S2/S3 ids).
+Noise you must handle:
+Name: abbreviations (Corp/Corporation, Pvt/Private, Ltd/Limited), legal-suffix inconsistencies, DBA/trade names, punctuation differences (& vs and), word-order transpositions, typos.
+Address: abbreviations (Rd/Road, St/Street), transliteration variants, missing components (no PIN/ZIP, no state), landmark-based references ("Near SBI ATM"), municipal numbering-format differences, component reordering.
+Training data covers US and India only. The test set additionally contains France, unseen in training. country must be treated as an open-set string label — never hardcode, filter, or one-hot-encode against only {US, India}. Every test entity, France included, must appear in the final submission.
+There is no explicit "source" column: a record's source is determined entirely by the S1- / S2- / S3- prefix on its entity_id and by which file it was read from.
+3. Exact Data Schema
+All files are tab-separated (.tsv). Business names and addresses may contain commas, so tabs are the delimiter. Always read with an explicit separator:
+import pandas as pd
+df = pd.read_csv("dataset/train/train_source1.tsv", sep="\t")
+Reading without sep="\t" silently collapses everything into one column — always verify df.shape[1] > 1 after load as a sanity check.
+Input files:
+Source file columns (*_source1.tsv, *_source2.tsv, *_source3.tsv):
+entity_id — unique id; prefix S1-, S2-, or S3- indicates the source.
+business_name — may contain abbreviations, typos, transliterations.
+business_address — may be partial, format-varying, landmark-based.
+country — open-set string label (US, India in train; + France in test).
+Ground truth file (train_ground_truth.tsv) columns:
+source1_entity_id — an S1 entity_id.
+matched_entity_ids — comma-separated list of matching S2-/S3- ids; empty when the entity is a singleton (no matches).
+Do not assume any other columns exist. Inspect actual dtypes, null rates, and cardinality with code before writing normalization logic — do not guess at value formats from this description alone.
+4. Hard Constraints (violate none of these)
+Academic integrity — strictly prohibited:
+No external database, API, or service lookups of any kind (commercial entity-resolution APIs, government business registries, geocoding APIs, any internet data augmentation). All logic must derive solely from the provided TSVs. A local, pre-trained open-weight model run entirely offline (see Section 13) is fine — a network call to look up or verify a business is not.
+Output format rules (violating any → submission rejected, unscored):
+matched_entity_ids may only reference Source 2 or Source 3 ids that exist in the test set. Self-matches to Source 1, or ids absent from the test set, are rejected.
+Every Source 1 test entity must appear exactly once in the submission. Missing entities cause rejection.
+No duplicate entity ids within any single id list. No duplicate source1_entity_id rows.
+Leave matched_entity_ids empty (not "NaN", not "None" — a truly empty string) for singletons.
+The final predictive model must satisfy the competition's licensing/parameter constraint. LightGBM is the primary classifier. The ≤8B parameter requirement applies to any neural/open-weight embedding model used, unless the competition explicitly defines it differently.
+Validation: utils/validate_submission.py (stdlib only) checks both output files against all of the above. Run it from the student_resource/ directory before every leaderboard upload:
+python3 utils/validate_submission.py \
+  --matching output/matching_results.tsv \
+  --candidate output/candidate_pairs.tsv \
+  --test-dir dataset/test
+It prints PASS (exit 0) or a numbered issue list (exit 1). It does not compute your F_0.5 score — only format validity. Always run this as the final step of every pipeline run, and treat a non-PASS result as a hard blocker before considering the run complete.
+5. Required Repository / File Structure
+Build the full submission package as you go, not as a final copy step:
+<team_name>_submission.zip
+├── output/
+│   ├── matching_results.tsv
+│   └── candidate_pairs.tsv
+├── code/
+│   └── business_entity_resolution/
+│       ├── src/
+│       │   ├── normalize.py        # Section 6
+│       │   ├── blocking.py         # Section 7
+│       │   ├── features.py         # Section 8
+│       │   ├── train_model.py      # Section 9
+│       │   ├── decode.py           # Section 10
+│       │   ├── write_outputs.py    # Section 11
+│       │   ├── evaluate.py         # Section 12 (local F_0.5 harness)
+│       │   └── run_pipeline.py     # orchestrates all stages end-to-end
+│       ├── README.md               # exact run instructions, reproducible from raw data
+│       └── requirements.txt        # pinned dependency versions
+└── Documentation_template.md       # filled-in methodology write-up
+run_pipeline.py must regenerate both output/matching_results.tsv and output/candidate_pairs.tsv from only the raw dataset/ files, using nothing outside code/business_entity_resolution/. Anyone should be able to pip install -r requirements.txt && python src/run_pipeline.py and reproduce your submission exactly.
+6. Module: normalize.py
+Build one function applied identically to business_name and business_address across all three sources — consistency across sources matters more than any single rule's cleverness.
+Steps, in order:
+Unicode NFKC normalization (handles transliteration/accent variants).
+Lowercase.
+& → and (and vice versa is not needed — pick one canonical direction).
+Strip punctuation but retain a raw (unstripped) copy of every field alongside the cleaned one — edit-distance features may want raw text, token features want cleaned text.
+Legal-suffix dictionary for business_name: map corp/corporation/co → corp; ltd/limited → ltd; pvt/private → pvt; inc/incorporated → inc, etc. Build this dictionary by inspecting actual value frequencies in the training business_name columns — do not invent entries you haven't observed. Produce two name fields: suffix-normalized, and suffix-stripped entirely (drop the tokens after mapping) — keep both, since presence/absence of a suffix is itself a weak feature.
+Address abbreviation dictionary: rd→road, st→street, ave→avenue, apt→apartment, etc. — again, derive the dictionary from patterns actually observed in business_address values across the training data (inspect first), keep it general rather than country-keyed since France must go through the same function with no special-casing.
+Lightweight address component extraction via regex only (no geocoding): pull out digit clusters that look like a PIN/ZIP code (varies by length/format across countries — detect by pattern, not a country lookup table), a leading street-number token, and treat the remainder as a free-text locality string. Store these as separate derived columns (postal_code_guess, street_number_guess, address_remainder) alongside the full normalized address — used for exact-match features in Section 8, not for imputing missing data.
+Whitespace collapse and trim as the final step on every derived text field.
+Output: a normalized dataframe per source with both raw and cleaned name/address columns, the suffix-stripped name variant, and the three address-component guess columns. Print null rates and a sample of before/after transformations for a subsample of rows as a sanity check before moving to blocking.
+7. Module: blocking.py
+Blocking sets the recall ceiling — implement all strategies below and union their outputs; do not rely on a single method.
+Token inverted index: build an inverted index of significant business_name tokens (after suffix-stripping and stopword removal) per S2 and S3. For each S1 record, collect all S2/S3 records sharing ≥1 token, weighted by inverse document frequency so common tokens ("store", "the") don't create oversized blocks. Cap per-token posting-list contribution if a token is extremely common.
+TF-IDF cosine over character n-grams (name): fit a TfidfVectorizer(analyzer="char_wb", ngram_range=(2,4)) (or similar) on normalized business_name across all sources, compute top-k nearest S2/S3 neighbors per S1 record via sparse matrix multiplication or sklearn.neighbors.NearestNeighbors(metric="cosine"). During validation experiments, learned vectorizers/statistics must be fitted only on the training partition; at final test inference they may be fitted using all available training sources.
+TF-IDF cosine over address: same approach applied to normalized business_address.
+Sorted neighborhood: sort all records by a normalized name key (e.g., first N characters of the cleaned, suffix-stripped name), slide a fixed-width window, and add nearby S2/S3 records as candidates for each S1 record in the window — this catches word-order transpositions that token/n-gram blocking can miss.
+Phonetic blocking (secondary pass): apply Soundex or Metaphone to the first significant name token; block records sharing a phonetic code. Use a pure-Python implementation (e.g. jellyfish) — no external service.
+Combination: union candidates from all five strategies per S1 entity, keep each strategy's raw similarity score as a separate numeric column (do not discard them — feed them into Section 8 as features), then test 20 / 40 / 60 / 100 candidates → measure blocking recall + runtime + validation F0.5, then select the optimal cap based on those measurements so the downstream classifier stays tractable.
+Do not hard-filter by exact country match. Country agreement is a soft signal, computed later as a feature (Section 8) — always compute textual candidates across country boundaries too, since France has no training examples and must rely purely on textual similarity to surface candidates at all.
+Required self-check: on a held-out slice of the training ground truth, measure blocking recall = (fraction of true S1↔S2/S3 matches that survive the union of all blocking strategies). Print this number. If it is materially below ~95%, loosen top-k or add a blocking key before moving on — this ceiling cannot be recovered by the classifier later.
+Output of this module is exactly the object that becomes candidate_pairs.tsv after Section 11 writes it — the same candidate set the classifier in Section 9 will score, not an earlier, looser pass you filter further downstream.
+8. Module: features.py
+Compute one feature vector per (S1 id, candidate id) pair produced by blocking.py.
+Name features:
+Normalized Levenshtein distance (raw name and cleaned name)
+Jaro-Winkler similarity
+Token Jaccard and Dice coefficient (cleaned, tokenized name)
+TF-IDF cosine — char n-gram and word n-gram variants
+Token-sort ratio and token-set ratio (order-invariant; catches transpositions) — via rapidfuzz or equivalent
+Absolute and relative name length difference
+Acronym match flag: does one side's first-letters sequence equal the other side's short form?
+Suffix-stripped-name exact-match flag
+Address features:
+Same similarity suite (Levenshtein, Jaro-Winkler, Jaccard, cosine) on normalized address
+Postal-code exact-match flag (only when both sides' postal_code_guess is non-null)
+Street-number exact-match flag
+Longest common substring length (normalized)
+Address length ratio
+Meta / structural features:
+Country-match flag (same/different string) — never used as a hard filter, only a feature
+Source-pair indicator (S1×S2 vs S1×S3) — patterns may differ by source
+Each blocking strategy's raw similarity score from Section 7 (do not drop these)
+Candidate rank within its S1 entity's block (1 = closest by blocking score)
+Optional (Tier 2, only if time remains after Sections 9–11 are working end-to-end): a local open-weight sentence-embedding model (MIT/Apache-licensed, ≤8B params, run fully offline — see Section 13 for the default choice) embedding cleaned name/address text, with cosine similarity between S1 and candidate embeddings as one additional feature column. This is additive on top of the string features above, never a replacement for them.
+Output: one row per candidate pair with all feature columns plus source1_entity_id and candidate_entity_id as join keys, ready for Section 9.
+9. Module: train_model.py
+Label construction: from train_ground_truth.tsv, join against the blocking output on (source1_entity_id, candidate_entity_id). A pair is a positive (label 1) if it appears in the exploded matched_entity_ids list; every other pair that blocking retrieved for that S1 entity is a negative (label 0). Use these blocking-derived negatives — do not sample random negatives — since they are the actual decision boundary the classifier needs to learn (hard negatives).
+Split strategy: Create one fixed, reproducible S1-level train/validation split before fitting any learned component. Use this same split for blocking-recall measurement, classifier validation, calibration, threshold tuning, and final reported F0.5. Fit TF-IDF/vectorizers/blocking statistics on the training portion only where applicable.
+Model: LightGBM binary classifier (objective="binary"), MIT-licensed, well under the 8B-parameter cap. Use scale_pos_weight or is_unbalance=True to address the heavy class imbalance (most candidate pairs are non-matches). Reasonable starting hyperparameters: num_leaves=31, learning_rate=0.05, n_estimators=500 with early stopping on validation AUC-PR (not accuracy), max_depth=-1. Tune from there only if time allows — do not spend excessive time on hyperparameter search before Sections 10–11 are working end-to-end.
+Hard-negative mining (Tier 1 refinement — do this once you have a working baseline): Run the baseline on the training portion using cross-validation or out-of-fold predictions, identify high-confidence false positives there, add those as hard negatives, and evaluate the resulting model once on the untouched validation partition.
+Evaluation during training: monitor precision-recall curve on the grouped validation split, not plain accuracy or AUC-ROC — the competition metric is precision-heavy (Section 12 has the exact formula). Save the trained model and the validation predictions (scores + true labels + entity ids) to disk for use by Section 10's threshold tuning.
+10. Module: decode.py
+This stage matters as much as model choice — F_0.5 is precision-weighted (β=0.5) and macro-averaged per S1 entity, with correct singleton prediction scoring a full 1.0. Do not use a fixed 0.5 cutoff without tuning. The ground-truth matching lists are sets, so ordering of matched IDs is irrelevant to scoring. A prediction containing an incorrect extra ID counts as a false positive and therefore reduces precision.
+Compare raw LightGBM scores against calibrated scores. Keep calibration only if it improves grouped validation F0.5 under a nested or separate calibration procedure. Otherwise use raw scores.
+Threshold sweep: on the grouped validation split, compute the exact F_0.5 macro-average (Section 12's formula) for a grid of thresholds (e.g. 0.05 to 0.95 in steps of 0.01). Select the threshold that maximizes validation F_0.5. Because false merges are penalized 2× more than misses, expect the optimal threshold to sit meaningfully above 0.5 — do not assume 0.5 is near-optimal.
+Per-entity decoding: for each S1 entity, keep only candidates whose calibrated score exceeds the tuned threshold. If none exceed it, emit an empty match list (a correctly predicted singleton scores 1.0).
+Confidence-gap rule (apply if it improves validation F_0.5 — test empirically, do not assume): when the top candidate's score is only marginally above the threshold, or only marginally above the second candidate's score, prefer emitting fewer matches — a marginal-confidence inclusion typically hurts precision more than a marginal-confidence omission hurts recall under this metric.
+Persist the exact threshold(s) and calibration parameters used, so write_outputs.py (Section 11) applies identical logic to the test set as was validated in Section 12.
+Output: a per-S1-entity list of accepted candidate ids, ready to be written as matching_results.tsv.
+11. Module: write_outputs.py
+Write both required TSVs, tab-separated, matching the exact column names and rules from the problem statement (Section 3/4) — column names below are exact, not paraphrased.
+matching_results.tsv — columns source1_entity_id, matched_entity_ids:
+Build by iterating every row of test_source1.tsv (not just entities that received candidates) so every S1 test entity appears exactly once.
+matched_entity_ids = comma-separated, no spaces, no quoting, deduplicated, containing only S2-/S3- ids present in the test set; empty string for singletons.
+candidate_pairs.tsv — columns source1_entity_id, candidate_entity_ids:
+Written from the exact candidate set that Section 9's model actually scored (the output of Section 7's blocking after the block-size cap) — the last-stage candidate list, not an earlier, looser blocking pass.
+Same formatting rules as above (comma-separated, deduped, S2-/S3- ids only, present in test set).
+Every id that appears in matching_results.tsv for a given S1 entity must also appear in that entity's row here — assert this programmatically before writing (a violation signals a pipeline bug per the problem statement).
+Final step of this module: invoke utils/validate_submission.py programmatically (via subprocess) on the two written files and fail loudly (raise, don't silently continue) if it does not return PASS. Treat a passing validation run as the definition of "the output stage is done," not merely "the files were written."
+12. Module: evaluate.py — Local F_0.5 Harness
+Implement this exactly, since it is the only ground truth you have for judging every decision above (no leaderboard access during offline development):
+def f0_5_per_entity(predicted_ids: set, true_ids: set) -> float:
+    if len(true_ids) == 0:
+        return 1.0 if len(predicted_ids) == 0 else 0.0
+    if len(predicted_ids) == 0:
+        return 0.0
+    tp = len(predicted_ids & true_ids)
+    precision = tp / len(predicted_ids)
+    recall = tp / len(true_ids)
+    if precision == 0 and recall == 0:
+        return 0.0
+    beta = 0.5
+    return (1 + beta**2) * precision * recall / (beta**2 * precision + recall)
+
+def macro_f0_5(predictions: dict, ground_truth: dict) -> float:
+    # predictions, ground_truth: {source1_entity_id: set(matched_ids)}
+    scores = [f0_5_per_entity(predictions.get(sid, set()), true_ids)
+              for sid, true_ids in ground_truth.items()]
+    return sum(scores) / len(scores)
+Usage: use the single fixed train/validation split created earlier as your only proxy for the leaderboard. Run the full pipeline (blocking → features → model → decode) on that held-out slice exactly as it will run on the real test set, then score it with macro_f0_5. Re-run this after every pipeline change and report the number — every section above should be justified by its effect on this score, not by intuition alone.
+13. Default Decisions (use these instead of asking)
+14. Deliverables Checklist / Definition of Done
+normalize.py runs on all three source files and prints before/after samples plus null-rate stats
+blocking.py produces the candidate set, with a printed blocking-recall number against held-out training ground truth
+features.py produces one row per candidate pair with all listed feature columns, no unexplained nulls
+train_model.py trains LightGBM with grouped validation, saves model + validation predictions, reports validation AUC-PR
+decode.py tunes and applies a threshold, reports the validation macro F_0.5 achieved
+write_outputs.py writes both TSVs for the test set and confirms PASS from utils/validate_submission.py
+evaluate.py harness matches the exact competition formula and was used to justify threshold/feature/model choices, not just run once at the end
+run_pipeline.py reproduces both output files end-to-end from raw dataset/ files with a single command
+README.md gives exact run instructions; requirements.txt pins versions
+Documentation_template.md filled in: methodology, blocking strategy + recall numbers, feature list, model + license/param-count compliance statement, threshold-tuning rationale, known failure modes
+No external API/network calls anywhere in code/business_entity_resolution/src/
+Final model satisfies the competition's licensing/parameter constraint, stated explicitly in the documentation
+When every box above is true, the task is complete. Do not stop earlier and ask whether to continue — proceed through the full checklist autonomously, reporting progress with real numbers (blocking recall, validation F_0.5, final file row counts) at each stage rather than describing intended results.

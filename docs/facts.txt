@@ -1,0 +1,21 @@
+# Resume Pointers: Business Entity Resolution (Amazon ML Challenge)
+
+## Project Overview & Impact
+*   **Entity Resolution Pipeline:** Designed and implemented an end-to-end Machine Learning pipeline to link fragmented, noisy business records across three independent data sources without common identifiers.
+*   **Large-Scale Data Processing:** Processed a massive ~1.1 GB dataset comprising over 12.5 million business records (2.2M reference, 5M Source A, 5.2M Source B) spanning 4 core columns (ID, name, address, country) and multiple regions (US, India, France).
+*   **Evaluation Metric:** Optimized the system for a macro F0.5 score, heavily weighting precision over recall (1.25x precision weight) to successfully minimize the rate of false merges (linking distinct businesses).
+
+## Data Normalization & Preprocessing
+*   **Text Standardization:** Applied robust NLP preprocessing including Unicode NFKC normalization, whitespace collapse, and punctuation stripping across all 12.5M records.
+*   **Regex-based Parsing:** Developed custom regex rules to standardize 20+ business legal suffixes (e.g., Corp, Ltd, Inc) and address abbreviations (e.g., St, Rd, Blvd). 
+*   **Information Extraction:** Successfully extracted critical hidden components from unstructured address strings, such as leading street numbers and 5/6-digit PIN/ZIP codes.
+
+## Candidate Generation (Blocking Strategy)
+*   **Multi-Strategy Blocking:** Engineered a highly efficient 5-strategy blocking pipeline to reduce the massive search space and maintain high recall.
+*   **Techniques Used:** Leveraged Token Inverted Indexes, TF-IDF nearest neighbors (KNN) on business names and addresses, Sorted Neighborhood on name prefixes, and Metaphone phonetic blocking.
+*   **Aggregation:** Aggregated confidence scores across all five strategies to isolate and retain the Top 60 highest-probability candidate matches per source entity.
+
+## Feature Engineering & Modeling
+*   **Advanced String Similarity:** Engineered 25 distinct numeric features to capture phonetic and structural similarities, including normalized Levenshtein distance, Jaro-Winkler, Jaccard index, Dice similarity, Longest Common Subsequence (LCS), and token sort/set ratios.
+*   **Tree-based Classification:** Trained an optimized LightGBM binary classifier (500 estimators, 31 leaves, compliant with a strict <= 8 Billion parameter constraint) to accurately distinguish true entity matches from false positives.
+*   **Threshold Tuning & Performance:** Programmatically tuned probability thresholds (0.05 to 0.95 intervals) on a hold-out validation set to systematically optimize the final Macro F0.5 score and AUC-PR metrics for the leaderboard.
