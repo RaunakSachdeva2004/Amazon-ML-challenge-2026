@@ -1,11 +1,15 @@
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 # ============================================================
 # 1. SETUP — FAST, LIGHTWEIGHT, KAGGLE-FRIENDLY
 # ============================================================
-import os
+# import os
 import re
 import gc
 import time
@@ -36,10 +40,13 @@ except Exception:
 print("Environment ready")
 print("Polars:", HAS_POLARS)
 print("RapidFuzz:", HAS_RAPIDFUZZ)
-import os
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+try:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+except NameError:
+    PROJECT_ROOT = Path(".").resolve()
 DATA_ROOT = PROJECT_ROOT / "student_resource"
 print("Selected DATA_ROOT:", DATA_ROOT)
+
 
 # List all files inside the directory
 all_files = sorted(DATA_ROOT.rglob("*"))
@@ -200,11 +207,16 @@ print(gt["n_matches"].describe().to_frame("match_count"))
 # ============================================================
 counts = gt["n_matches"].value_counts().sort_index()
 
-ax = counts.head(20).plot(kind="bar", figsize=(12, 4))
-ax.set_title("Ground Truth — Number of Matches per Source 1 Entity")
-ax.set_xlabel("Number of matched S2/S3 records")
-ax.set_ylabel("Number of S1 entities")
-plt.xticks(rotation=0)
+if HAS_MATPLOTLIB:
+    try:
+        ax = counts.head(20).plot(kind="bar", figsize=(12, 4))
+        ax.set_title("Ground Truth — Number of Matches per Source 1 Entity")
+        ax.set_xlabel("Number of matched S2/S3 records")
+        ax.set_ylabel("Number of S1 entities")
+        plt.xticks(rotation=0)
+    except Exception:
+        pass
+
 
 # ============================================================
 # 12. EXACT MATCH HELPERS
